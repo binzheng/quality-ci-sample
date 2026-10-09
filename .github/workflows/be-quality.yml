@@ -1,0 +1,75 @@
+# BE 品質チェック (再利用ワークフロー)
+# JUnit / JaCoCo / Javadoc / Checkstyle / SpotBugs
+name: BE Quality
+
+on:
+  workflow_call:
+
+jobs:
+  be:
+    name: BE (JUnit / JaCoCo / Javadoc / Checkstyle / SpotBugs)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: be
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      # テスト失敗でも JaCoCo レポートまで生成させ、合否は Quality gate で判定する
+      - name: Test (JUnit + JaCoCo)
+        id: test
+        continue-on-error: true
+        run: mvn -B -ntp verify -Dmaven.test.failure.ignore=true
+
+      - name: Javadoc
+        id: javadoc
+        continue-on-error: true
+        run: |
+          mkdir -p target
+          mvn -B -ntp javadoc:javadoc 2>&1 | tee target/javadoc.log
+
+      - name: Checkstyle
+        id: checkstyle
+        continue-on-error: true
+        run: mvn -B -ntp checkstyle:check
+
+      - name: SpotBugs
+        id: spotbugs
+        continue-on-error: true
+        run: mvn -B -ntp spotbugs:check
+
+      - name: Summarize reports
+        if: always()
+        working-directory: .
+        run: |
+          python3 .github/scripts/summarize.py be be/target out/be
+          cat out/be/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: be-report
+          path: out/be
+          retention-days: 14
+
+      - name: Publish test results (Checks)
+        if: always() && hashFiles('be/target/surefire-reports/TEST-*.xml') != ''
+        uses: dorny/test-reporter@v1
+        with:
+          name: BE Unit Tests (JUnit)
+          path: be/target/surefire-reports/TEST-*.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Quality gate
+        if: always()
+        working-directory: .
+        run: python3 .github/scripts/summarize.py gate out/be/summary.json

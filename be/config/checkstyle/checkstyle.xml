@@ -1,0 +1,65 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!--
+  サンプル用の軽量ルールセット。
+  severity=warning の指摘はレポートのみ、error にしたルールは品質ゲートで不合格になる。
+-->
+<module name="Checker">
+  <property name="charset" value="UTF-8"/>
+  <property name="severity" value="warning"/>
+  <property name="fileExtensions" value="java"/>
+
+  <module name="FileTabCharacter"/>
+  <module name="NewlineAtEndOfFile"/>
+  <module name="LineLength">
+    <property name="max" value="120"/>
+  </module>
+
+  <module name="TreeWalker">
+    <!-- imports -->
+    <module name="AvoidStarImport"/>
+    <module name="RedundantImport"/>
+    <module name="UnusedImports">
+      <property name="severity" value="error"/>
+    </module>
+
+    <!-- naming -->
+    <module name="ConstantName"/>
+    <module name="LocalVariableName"/>
+    <module name="MemberName"/>
+    <module name="MethodName"/>
+    <module name="ParameterName"/>
+    <module name="TypeName"/>
+
+    <!-- blocks / whitespace -->
+    <module name="NeedBraces"/>
+    <module name="LeftCurly"/>
+    <module name="RightCurly"/>
+    <module name="EmptyBlock"/>
+    <module name="WhitespaceAround"/>
+
+    <!-- coding -->
+    <module name="EqualsHashCode">
+      <property name="severity" value="error"/>
+    </module>
+    <module name="MagicNumber"/>
+    <module name="MissingSwitchDefault"/>
+    <module name="SimplifyBooleanExpression"/>
+
+    <!-- design / size -->
+    <module name="FinalClass"/>
+    <module name="HideUtilityClassConstructor"/>
+    <module name="MethodLength">
+      <property name="max" value="60"/>
+    </module>
+    <module name="ParameterNumber"/>
+
+    <!-- javadoc -->
+    <module name="MissingJavadocMethod">
+      <property name="scope" value="public"/>
+      <property name="allowMissingPropertyJavadoc" value="true"/>
+    </module>
+  </module>
+</module>

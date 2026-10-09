@@ -1,0 +1,84 @@
+# FE 品質チェック (再利用ワークフロー)
+# ESLint / Vitest + Coverage / Storybook build / npm audit / SLOCCount(cloc)
+name: FE Quality
+
+on:
+  workflow_call:
+
+jobs:
+  fe:
+    name: FE (ESLint / Vitest / Storybook / audit / SLOC)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: fe
+    env:
+      STORYBOOK_DISABLE_TELEMETRY: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+          mkdir -p reports
+
+      - name: Install cloc (SLOCCount)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq cloc
+
+      # 各ツールは continue-on-error で最後まで実行し、最後の Quality gate で合否を判定する
+      - name: ESLint
+        id: eslint
+        continue-on-error: true
+        run: npx eslint . -f json -o reports/eslint.json
+
+      - name: Vitest (+ coverage)
+        id: vitest
+        continue-on-error: true
+        run: npx vitest run --coverage
+
+      - name: Storybook build
+        id: storybook
+        continue-on-error: true
+        run: npx storybook build --quiet -o reports/storybook
+
+      - name: npm audit
+        run: npm audit --json > reports/npm-audit.json || true
+
+      - name: SLOCCount (cloc)
+        run: |
+          cloc src --json --quiet --out=reports/cloc.json
+          cloc src --by-file --json --quiet --out=reports/cloc-by-file.json
+
+      - name: Summarize reports
+        if: always()
+        working-directory: .
+        run: |
+          python3 .github/scripts/summarize.py fe fe/reports out/fe
+          cat out/fe/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fe-report
+          path: out/fe
+          retention-days: 14
+
+      - name: Publish test results (Checks)
+        if: always() && hashFiles('fe/reports/vitest/junit.xml') != ''
+        uses: dorny/test-reporter@v1
+        with:
+          name: FE Unit Tests (Vitest)
+          path: fe/reports/vitest/junit.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Quality gate
+        if: always()
+        working-directory: .
+        run: python3 .github/scripts/summarize.py gate out/fe/summary.json

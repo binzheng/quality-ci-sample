@@ -1,0 +1,23 @@
+# FE
+node_modules/
+fe/dist/
+fe/reports/
+fe/storybook-static/
+*.log
+
+# BE
+be/target/
+
+# Docs
+docs/site/
+
+# CI 作業ディレクトリ
+out/
+site/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

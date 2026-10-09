@@ -120,8 +120,11 @@ jobs:
             fi
           done
 
-  # 補助: 各ジョブの要約を 1 件の PR コメントにまとめて push ごとに上書きする
-  # (フォーク・Dependabot の PR では書き込めないため、正はジョブサマリとする)
+  # PR レポート:
+  #  1. 全ジョブの結果 (要約・失敗テスト・カバレッジ・指摘の全件) を 1 ファイルの HTML (ci-report.html) にまとめ、
+  #     圧縮せずに Artifact として上げる (archive: false → リンクを開くとブラウザでそのまま表示される)
+  #  2. PR コメントは要約とそのリンクだけにして、push ごとに上書きする
+  # (フォーク・Dependabot の PR ではコメントを書き込めないため、正はジョブサマリとする)
   pr-comment:
     name: PR comment
     needs: [fe, be, docs]
@@ -146,16 +149,42 @@ jobs:
           path: summaries
           merge-multiple: true
 
+      - name: Build single-file HTML report
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          mkdir -p summaries report
+          # この実行の Artifact (zip のレポート一式) へのリンクを HTML に載せる
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq "[.artifacts[] | {name, size: .size_in_bytes, url: \"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts/\(.id)\"}]" \
+            > artifacts.json || echo "[]" > artifacts.json
+          python3 .github/scripts/ci_report.py report-html --summaries summaries --artifacts artifacts.json \
+            --out report/ci-report.html
+
+      - name: Upload HTML report (uncompressed)
+        id: report
+        uses: actions/upload-artifact@v7
+        with:
+          path: report/ci-report.html
+          archive: false
+          overwrite: true
+          retention-days: 14
+
       - name: Build and post comment
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR: ${{ github.event.pull_request.number }}
+          REPORT_URL: ${{ steps.report.outputs.artifact-url }}
         run: |
-          mkdir -p summaries
           pages_url=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null || true)
-          python3 .github/scripts/ci_report.py comment --summaries summaries --out comment.md --pages-url "$pages_url"
+          python3 .github/scripts/ci_report.py comment --summaries summaries --out comment.md \
+            --artifacts artifacts.json --report-url "$REPORT_URL" --pages-url "$pages_url"
           id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
                  --jq '.[] | select(.body | startswith("<!-- ci-report -->")) | .id' | head -n 1)
           if [ -n "$id" ]; then

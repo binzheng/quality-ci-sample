@@ -100,6 +100,47 @@ jobs:
           path: out/pages/be-spotbugs
           retention-days: ${{ inputs.retention-days }}
 
+      # PR コメントからリンクする画面 (1 ファイル完結の HTML)。圧縮せずに上げるとブラウザでそのまま開ける
+      - name: Upload view be-tests.html
+        if: always() && hashFiles('out/report/be-tests.html') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/be-tests.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload view be-jacoco.html
+        if: always() && hashFiles('out/report/be-jacoco.html') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/be-jacoco.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload view be-javadoc.html
+        if: always() && hashFiles('out/report/be-javadoc.html') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/be-javadoc.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload view be-checkstyle.html
+        if: always() && hashFiles('out/report/be-checkstyle.html') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/be-checkstyle.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload view be-spotbugs.html
+        if: always() && hashFiles('out/report/be-spotbugs.html') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/be-spotbugs.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
       - name: Upload job summary
         if: always()
         uses: actions/upload-artifact@v4

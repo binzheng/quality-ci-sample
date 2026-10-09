@@ -1,18 +1,25 @@
-# develop へのマージ (push) 時に品質レポートと Docs を GitHub Pages へ公開する
-#   /          ポータル (各レポートへのリンクと品質ゲート結果)
-#   /fe/       FE レポート (ESLint / Vitest / Coverage / Storybook / npm audit / SLOC)
-#   /be/       BE レポート (JUnit / JaCoCo / Javadoc / Checkstyle / SpotBugs)
-#   /docs/     MkDocs ドキュメント
-name: Publish Pages
+# develop の CI 完了後に、各枠の最新 Artifact (pages-<枠>) を集めて GitHub Pages へ配備する
+#
+#   /                  索引 (ダッシュボード) と site.json
+#   /be/<レポート>/    tests, jacoco, javadoc, checkstyle, spotbugs
+#   /fe/<pkg>/<レポート>/  vitest (+coverage/), storybook, eslint, audit, sloc
+#   /docs/             Docusaurus
+#   /ci-metrics/       gh-pages ブランチにあれば取り込む
+#
+# 走らなかったジョブの枠は、その枠を最後に出した develop の実行の Artifact を使うので消えない。
+# workflow_run はデフォルトブランチのこのファイルで動く (デフォルトブランチ = develop を前提)。
+name: Pages
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [develop]
   workflow_dispatch:
 
 permissions:
   contents: read
-  checks: write
+  actions: read
   pages: write
   id-token: write
 
@@ -21,42 +28,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  fe:
-    uses: ./.github/workflows/fe-quality.yml
-
-  be:
-    uses: ./.github/workflows/be-quality.yml
-
-  docs:
-    uses: ./.github/workflows/docs-build.yml
-
   deploy:
-    name: Deploy to GitHub Pages
-    needs: [fe, be, docs]
-    # 品質ゲート不合格でもレポート自体は公開する
-    if: ${{ !cancelled() }}
+    name: Assemble & deploy
+    # PR の実行は対象外 (develop への push・定期実行・手動実行のみ)
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.workflow_run.event != 'pull_request' && github.event.workflow_run.conclusion != 'cancelled')
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PAGES_BUDGET_MB: 950
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download reports
-        uses: actions/download-artifact@v4
         with:
-          pattern: "*-report"
-          path: artifacts
+          ref: develop
 
-      - name: Assemble site
+      - name: Fetch latest develop artifacts (per slot)
+        run: python3 .github/scripts/pages_site.py fetch --dest staging --branch develop
+
+      - name: Import ci-metrics from gh-pages (if any)
         run: |
           mkdir -p site
-          if [ -d artifacts/fe-report ]; then cp -r artifacts/fe-report site/fe; fi
-          if [ -d artifacts/be-report ]; then cp -r artifacts/be-report site/be; fi
-          if [ -d artifacts/docs-report/site ]; then cp -r artifacts/docs-report/site site/docs; fi
-          if [ -f artifacts/docs-report/summary.json ]; then cp artifacts/docs-report/summary.json site/docs-summary.json; fi
-          python3 .github/scripts/summarize.py portal site
-          touch site/.nojekyll
+          if git ls-remote --exit-code --heads origin gh-pages > /dev/null; then
+            git fetch --depth 1 origin gh-pages
+            git archive FETCH_HEAD ci-metrics 2>/dev/null | tar -x -C site || echo "ci-metrics なし"
+          fi
+
+      - name: Assemble site
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SOURCE_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          SOURCE_RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          CI_WORKFLOW_FILE: ci.yml
+        run: python3 .github/scripts/pages_site.py assemble --staging staging --site site
 
       - uses: actions/configure-pages@v5
 

@@ -1,18 +1,26 @@
 # BE 品質チェック (再利用ワークフロー)
 # JUnit / JaCoCo / Javadoc / Checkstyle / SpotBugs
+# 出力する Artifact: pages-be-{tests,jacoco,javadoc,checkstyle,spotbugs} と ci-summary-be
 name: BE Quality
 
 on:
   workflow_call:
+    inputs:
+      retention-days:
+        type: number
+        default: 14
 
 jobs:
   be:
-    name: BE (JUnit / JaCoCo / Javadoc / Checkstyle / SpotBugs)
+    name: BE
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
         working-directory: be
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
@@ -22,54 +30,85 @@ jobs:
           java-version: 21
           cache: maven
 
-      # テスト失敗でも JaCoCo レポートまで生成させ、合否は Quality gate で判定する
+      # テストが失敗しても JaCoCo レポートまで作り、合否は Quality gate で判定する
       - name: Test (JUnit + JaCoCo)
-        id: test
         continue-on-error: true
         run: mvn -B -ntp verify -Dmaven.test.failure.ignore=true
 
       - name: Javadoc
-        id: javadoc
         continue-on-error: true
         run: |
           mkdir -p target
           mvn -B -ntp javadoc:javadoc 2>&1 | tee target/javadoc.log
 
       - name: Checkstyle
-        id: checkstyle
         continue-on-error: true
         run: mvn -B -ntp checkstyle:check
 
       - name: SpotBugs
-        id: spotbugs
         continue-on-error: true
         run: mvn -B -ntp spotbugs:check
 
-      - name: Summarize reports
+      - name: Fetch develop baseline (coverage diff)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        working-directory: .
+        run: python3 .github/scripts/pages_site.py fetch --dest baseline --slots be-jacoco
+
+      - name: Summarize (job summary / annotations)
         if: always()
         working-directory: .
-        run: |
-          python3 .github/scripts/summarize.py be be/target out/be
-          cat out/be/summary.md >> "$GITHUB_STEP_SUMMARY"
+        run: python3 .github/scripts/ci_report.py be --target be/target --out out --baseline baseline
 
-      - name: Upload report
+      - name: Upload pages-be-tests
+        if: always() && hashFiles('out/pages/be-tests/index.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-be-tests
+          path: out/pages/be-tests
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload pages-be-jacoco
+        if: always() && hashFiles('out/pages/be-jacoco/index.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-be-jacoco
+          path: out/pages/be-jacoco
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload pages-be-javadoc
+        if: always() && hashFiles('out/pages/be-javadoc/index.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-be-javadoc
+          path: out/pages/be-javadoc
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload pages-be-checkstyle
+        if: always() && hashFiles('out/pages/be-checkstyle/index.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-be-checkstyle
+          path: out/pages/be-checkstyle
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload pages-be-spotbugs
+        if: always() && hashFiles('out/pages/be-spotbugs/index.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-be-spotbugs
+          path: out/pages/be-spotbugs
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload job summary
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: be-report
-          path: out/be
-          retention-days: 14
-
-      - name: Publish test results (Checks)
-        if: always() && hashFiles('be/target/surefire-reports/TEST-*.xml') != ''
-        uses: dorny/test-reporter@v1
-        with:
-          name: BE Unit Tests (JUnit)
-          path: be/target/surefire-reports/TEST-*.xml
-          reporter: java-junit
-          fail-on-error: false
+          name: ci-summary-be
+          path: out/summary
+          retention-days: 7
 
       - name: Quality gate
         if: always()
         working-directory: .
-        run: python3 .github/scripts/summarize.py gate out/be/summary.json
+        run: python3 .github/scripts/ci_report.py gate out/summary/be.json

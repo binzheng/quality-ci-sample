@@ -1,20 +1,33 @@
 # FE 品質チェック (再利用ワークフロー)
-# ESLint / Vitest + Coverage / Storybook build / npm audit / SLOCCount(cloc)
+# ESLint / Vitest + カバレッジ / Storybook / npm audit / SLOCCount(cloc)
+# 出力する Artifact: pages-fe-<pkg>-{vitest,storybook,eslint,audit,sloc} と ci-summary-fe-<pkg>
 name: FE Quality
 
 on:
   workflow_call:
+    inputs:
+      package:
+        type: string
+        required: true
+      path:
+        type: string
+        required: true
+      retention-days:
+        type: number
+        default: 14
 
 jobs:
   fe:
-    name: FE (ESLint / Vitest / Storybook / audit / SLOC)
+    name: FE ${{ inputs.package }}
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
-        working-directory: fe
+        working-directory: ${{ inputs.path }}
     env:
       STORYBOOK_DISABLE_TELEMETRY: 1
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
 
@@ -30,19 +43,16 @@ jobs:
       - name: Install cloc (SLOCCount)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq cloc
 
-      # 各ツールは continue-on-error で最後まで実行し、最後の Quality gate で合否を判定する
+      # 各ツールは最後まで実行し、合否は最後の Quality gate で判定する
       - name: ESLint
-        id: eslint
         continue-on-error: true
         run: npx eslint . -f json -o reports/eslint.json
 
       - name: Vitest (+ coverage)
-        id: vitest
         continue-on-error: true
         run: npx vitest run --coverage
 
       - name: Storybook build
-        id: storybook
         continue-on-error: true
         run: npx storybook build --quiet -o reports/storybook
 
@@ -54,31 +64,68 @@ jobs:
           cloc src --json --quiet --out=reports/cloc.json
           cloc src --by-file --json --quiet --out=reports/cloc-by-file.json
 
-      - name: Summarize reports
+      - name: Fetch develop baseline (coverage diff)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        working-directory: .
+        run: python3 .github/scripts/pages_site.py fetch --dest baseline --slots "fe-${{ inputs.package }}-vitest"
+
+      - name: Summarize (job summary / annotations)
         if: always()
         working-directory: .
         run: |
-          python3 .github/scripts/summarize.py fe fe/reports out/fe
-          cat out/fe/summary.md >> "$GITHUB_STEP_SUMMARY"
+          python3 .github/scripts/ci_report.py fe --package "${{ inputs.package }}" \
+            --reports "${{ inputs.path }}/reports" --out out --baseline baseline
 
-      - name: Upload report
+      - name: Upload pages-fe-${{ inputs.package }}-vitest
+        if: always() && hashFiles(format('out/pages/fe-{0}-vitest/index.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-fe-${{ inputs.package }}-vitest
+          path: out/pages/fe-${{ inputs.package }}-vitest
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload pages-fe-${{ inputs.package }}-storybook
+        if: always() && hashFiles(format('out/pages/fe-{0}-storybook/index.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-fe-${{ inputs.package }}-storybook
+          path: out/pages/fe-${{ inputs.package }}-storybook
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload pages-fe-${{ inputs.package }}-eslint
+        if: always() && hashFiles(format('out/pages/fe-{0}-eslint/index.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-fe-${{ inputs.package }}-eslint
+          path: out/pages/fe-${{ inputs.package }}-eslint
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload pages-fe-${{ inputs.package }}-audit
+        if: always() && hashFiles(format('out/pages/fe-{0}-audit/index.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-fe-${{ inputs.package }}-audit
+          path: out/pages/fe-${{ inputs.package }}-audit
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload pages-fe-${{ inputs.package }}-sloc
+        if: always() && hashFiles(format('out/pages/fe-{0}-sloc/index.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pages-fe-${{ inputs.package }}-sloc
+          path: out/pages/fe-${{ inputs.package }}-sloc
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload job summary
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fe-report
-          path: out/fe
-          retention-days: 14
-
-      - name: Publish test results (Checks)
-        if: always() && hashFiles('fe/reports/vitest/junit.xml') != ''
-        uses: dorny/test-reporter@v1
-        with:
-          name: FE Unit Tests (Vitest)
-          path: fe/reports/vitest/junit.xml
-          reporter: java-junit
-          fail-on-error: false
+          name: ci-summary-fe-${{ inputs.package }}
+          path: out/summary
+          retention-days: 7
 
       - name: Quality gate
         if: always()
         working-directory: .
-        run: python3 .github/scripts/summarize.py gate out/fe/summary.json
+        run: python3 .github/scripts/ci_report.py gate "out/summary/fe-${{ inputs.package }}.json"

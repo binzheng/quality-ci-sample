@@ -1,0 +1,165 @@
+# CI 本体
+#  - develop 向け PR : 変更のあったプロジェクトだけ検査 → 結果は PR 画面 (CI status・ジョブサマリ・注釈・PR コメント)
+#                      レポートは Artifact pages-<枠> (保持 14 日)
+#  - develop への push: 同じ検査 → Artifact pages-<枠> (保持 90 日) → pages.yml が Pages へ配備
+#  - 週 1 回の定期実行: 全プロジェクトを検査 (Pages の枠が保持期限切れで消えないように)
+name: CI
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+  schedule:
+    - cron: "0 21 * * 0" # 毎週月曜 06:00 JST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      fe: ${{ steps.diff.outputs.fe }}
+      be: ${{ steps.diff.outputs.be }}
+      docs: ${{ steps.diff.outputs.docs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff
+        id: diff
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          all=false
+          if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ] || [ -z "$BASE" ] \
+             || [ "$BASE" = 0000000000000000000000000000000000000000 ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            all=true
+            files=""
+          else
+            files=$(git diff --name-only "$BASE" HEAD)
+          fi
+          echo "$files" | sed 's/^/  /'
+          # CI 自体の変更は全プロジェクトを検査する
+          if echo "$files" | grep -q '^\.github/'; then all=true; fi
+          for p in fe be docs; do
+            if [ "$all" = true ] || echo "$files" | grep -q "^$p/"; then v=true; else v=false; fi
+            echo "$p=$v" >> "$GITHUB_OUTPUT"
+            echo "$p: $v"
+          done
+
+  fe:
+    needs: changes
+    if: needs.changes.outputs.fe == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: demo-fe
+            path: fe
+    uses: ./.github/workflows/fe-quality.yml
+    with:
+      package: ${{ matrix.package }}
+      path: ${{ matrix.path }}
+      retention-days: ${{ github.event_name == 'pull_request' && 14 || 90 }}
+
+  be:
+    needs: changes
+    if: needs.changes.outputs.be == 'true'
+    uses: ./.github/workflows/be-quality.yml
+    with:
+      retention-days: ${{ github.event_name == 'pull_request' && 14 || 90 }}
+
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    uses: ./.github/workflows/docs-build.yml
+    with:
+      retention-days: ${{ github.event_name == 'pull_request' && 14 || 90 }}
+
+  # ブランチ保護の必須チェックはこれ 1 つにする (走らなかったジョブは skipped で合格扱い)
+  ci-status:
+    name: CI status
+    needs: [changes, fe, be, docs]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        shell: bash
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          FE: ${{ needs.fe.result }}
+          BE: ${{ needs.be.result }}
+          DOCS: ${{ needs.docs.result }}
+        run: |
+          {
+            echo "### CI status"
+            echo ""
+            echo "| ジョブ | 結果 |"
+            echo "|---|---|"
+            echo "| changes | $CHANGES |"
+            echo "| fe | $FE |"
+            echo "| be | $BE |"
+            echo "| docs | $DOCS |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for r in "$CHANGES" "$FE" "$BE" "$DOCS"; do
+            if [ "$r" = failure ] || [ "$r" = cancelled ]; then
+              echo "::error::失敗したジョブがあります (changes=$CHANGES fe=$FE be=$BE docs=$DOCS)"
+              exit 1
+            fi
+          done
+
+  # 補助: 各ジョブの要約を 1 件の PR コメントにまとめて push ごとに上書きする
+  # (フォーク・Dependabot の PR では書き込めないため、正はジョブサマリとする)
+  pr-comment:
+    name: PR comment
+    needs: [fe, be, docs]
+    if: >-
+      always() && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download job summaries
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci-summary-*
+          path: summaries
+          merge-multiple: true
+
+      - name: Build and post comment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p summaries
+          pages_url=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url 2>/dev/null || true)
+          python3 .github/scripts/ci_report.py comment --summaries summaries --out comment.md --pages-url "$pages_url"
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+                 --jq '.[] | select(.body | startswith("<!-- ci-report -->")) | .id' | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F body=@comment.md > /dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@comment.md > /dev/null
+          fi

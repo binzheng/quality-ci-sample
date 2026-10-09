@@ -8,12 +8,16 @@ fe/storybook-static/
 # BE
 be/target/
 
-# Docs
-docs/site/
+# Docs (Docusaurus)
+docs/build/
+docs/.docusaurus/
+docs/.cache-loader/
 
 # CI 作業ディレクトリ
-out/
-site/
+/out/
+/site/
+/staging/
+/baseline/
 
 # IDE / OS
 .idea/

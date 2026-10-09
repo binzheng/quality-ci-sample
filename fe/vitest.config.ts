@@ -9,8 +9,10 @@ export default mergeConfig(
       globals: true,
       setupFiles: ['./src/test/setup.ts'],
       include: ['src/**/*.test.{ts,tsx}'],
-      // CI 用レポート: JUnit(XML) は Checks 表示、JSON は集計、HTML は Pages 公開
+      // CI 用レポート: JSON は集計・注釈、HTML は Pages 公開、JUnit(XML) は他ツール連携用
       reporters: ['default', 'junit', 'json', 'html'],
+      // 失敗したテストの行番号を注釈に使う
+      includeTaskLocation: true,
       outputFile: {
         junit: 'reports/vitest/junit.xml',
         json: 'reports/vitest/results.json',

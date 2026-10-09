@@ -1,3 +1,8 @@
+---
+sidebar_position: 2
+title: アーキテクチャ
+---
+
 # アーキテクチャ
 
 ## 全体像
@@ -12,7 +17,7 @@ flowchart LR
 ## バックエンド API
 
 | メソッド | パス | 説明 |
-|---|---|---|
+| --- | --- | --- |
 | GET | `/api/todos` | TODO 一覧 |
 | GET | `/api/todos/{id}` | TODO 取得 (無ければ 404) |
 | POST | `/api/todos` | TODO 作成 (`{"title": "..."}`) |
@@ -24,8 +29,8 @@ flowchart LR
 ## フロントエンド コンポーネント
 
 | コンポーネント | 説明 |
-|---|---|
+| --- | --- |
 | `Button` | primary / secondary / danger の 3 種類のボタン |
 | `TodoList` | TODO の追加・完了切替・削除 |
 
-各コンポーネントの見た目は Storybook で確認できます (ポータルからリンク)。
+各コンポーネントの見た目は Storybook (品質レポートの索引からリンク) で確認できます。

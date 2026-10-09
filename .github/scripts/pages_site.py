@@ -292,7 +292,7 @@ def render_index_html(states: list[dict], overview: dict, deploy: dict) -> str:
         ("BE カバレッジ", fmt_pct(overview["coverage"]["be"]), "JaCoCo Line"),
         ("FE カバレッジ", fe_value, f"Vitest {fe_sub}"),
         ("静的解析の指摘", f'<span class="s-{"fail" if iss["errors"] else "pass"}">{iss["errors"]}</span>',
-         f'エラー ・ 警告 {iss["warnings"]} (ESLint / Checkstyle / SpotBugs / Javadoc)'),
+         f'エラー件数 (警告 {iss["warnings"]} 件) ・ ESLint / Checkstyle / SpotBugs / Javadoc'),
     ]
     sec1 = ('<section><h2><span class="num">1</span>概況</h2><div class="cards">'
             + "".join(f'<div class="card"><div class="label">{esc(label)}</div><div class="value">{value}</div>'

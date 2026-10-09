@@ -5,8 +5,12 @@ Usage:
   ci_report.py fe   --package <pkg> --reports <fe/reports> --out <out> [--baseline <dir>]
   ci_report.py be   --target <be/target> --out <out> [--baseline <dir>]
   ci_report.py docs --outcome <success|failure> --build <docs/build> --out <out>
-  ci_report.py comment --summaries <dir> --out <comment.md> [--pages-url <url>]
+  ci_report.py report-html --summaries <dir> --out <ci-report.html> [--artifacts <artifacts.json>]
+  ci_report.py comment --summaries <dir> --out <comment.md> [--report-url <url>] [--pages-url <url>]
   ci_report.py gate <out>/summary/<job>.json
+
+PR では、全ジョブの結果を 1 ファイルの HTML (ci-report.html) にまとめ、圧縮せずに Artifact として上げる
+(upload-artifact の archive: false)。PR コメントからそのリンクを開くとブラウザでそのまま表示される。
 
 出力 (<out> 配下):
   pages/<枠>/                  その枠のサイト (index.html を含む)。Artifact pages-<枠> としてそのまま上げる
@@ -21,8 +25,9 @@ import re
 import sys
 from pathlib import Path
 
-from report_common import (STATUS, catalog_by_id, copy_dir, esc, first_line, load_json, md_cell, now_iso,
-                           parse_xml, pct, run_context, table_html, to_float, to_int, write_json, write_page)
+from report_common import (BASE_CSS, STATUS, catalog_by_id, copy_dir, esc, first_line, fmt_jst, load_json, md_cell,
+                           now_iso, parse_xml, pct, run_context, table_html, to_float, to_int, write_json,
+                           write_page)
 
 MAX_ROWS = 30
 MAX_ANNOTATIONS = 10  # GitHub は 1 ステップあたり error / warning 各 10 件まで表示する
@@ -143,6 +148,9 @@ class JobReport:
         write_json(summary_dir / f"{self.job}.json", {
             "job": self.job, "title": self.title, "gate_failures": self.gate_failures,
             "rows": [{"name": n, "status": s, "result": r} for n, s, r in self.rows],
+            # PR 用の 1 ファイル HTML レポートに全件を載せるため、指摘の一覧も省略せずに残す
+            "details": [{"summary": s, "headers": h, "rows": [[str(c) for c in row] for row in rows]}
+                        for s, h, rows in self.details],
             "commit": self.ctx["commit"], "run_url": self.ctx["run_url"], "generated_at": now_iso(),
         })
 
@@ -489,36 +497,127 @@ def cmd_docs(args) -> int:
 
 
 # --------------------------------------------------------------------------- PR コメント
-def cmd_comment(args) -> int:
-    ctx = run_context()
-    summaries = sorted(Path(args.summaries).rglob("*.md"))
-    bodies, failures = [], []
-    for p in summaries:
-        bodies.append(p.read_text(encoding="utf-8"))
-        data = load_json(p.with_suffix(".json")) or {}
+def load_jobs(summaries: str) -> tuple[list[dict], list[str]]:
+    jobs, failures = [], []
+    for p in sorted(Path(summaries).rglob("*.json")):
+        data = load_json(p) or {}
+        if "rows" not in data:
+            continue
+        jobs.append(data)
         failures += [f"{data.get('job', p.stem)}: {g}" for g in data.get("gate_failures", [])]
+    return jobs, failures
+
+
+REPORT_CSS = """
+header{border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:16px}
+header h1{margin:0 0 6px}
+.meta{display:flex;flex-wrap:wrap;gap:2px 16px;font-size:13px;color:var(--muted)}
+.banner{padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--card);margin:12px 0;font-weight:600}
+nav.toc{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+nav.toc a{border:1px solid var(--border);border-radius:6px;padding:2px 10px;text-decoration:none;font-size:13px}
+section.job{margin:28px 0}
+section.job h2{font-size:18px;border-left:4px solid var(--link);padding-left:8px}
+details{margin:10px 0;border:1px solid var(--border);border-radius:8px;padding:6px 12px}
+details>summary{cursor:pointer;font-weight:600}
+details[open]>summary{margin-bottom:6px}
+td.st{white-space:nowrap;text-align:center}
+ul.arts{padding-left:20px}
+footer{margin-top:32px;font-size:12px;color:var(--muted)}
+"""
+
+
+def cmd_report_html(args) -> int:
+    """全ジョブの結果を 1 ファイルの HTML にまとめる (外部ファイル・相対リンクを使わない自己完結の HTML)."""
+    ctx = run_context()
+    jobs, failures = load_jobs(args.summaries)
+    pr = os.environ.get("PR_NUMBER", "")
+    pr_title = os.environ.get("PR_TITLE", "")
+    pr_url = f"{ctx['server']}/{ctx['repo']}/pull/{pr}" if pr else ""
+    artifacts = load_json(Path(args.artifacts)) if args.artifacts else []
+
+    gate_cls = "s-fail" if failures else "s-pass"
+    gate = (f'<div class="banner {gate_cls}">'
+            + (f'❌ 品質ゲート: 不合格 — {esc(" / ".join(failures))}' if failures else "✅ 品質ゲート: 合格")
+            + "</div>")
+    toc = '<nav class="toc">' + "".join(
+        f'<a href="#job-{esc(j["job"])}">{esc(j.get("title", j["job"]))}</a>' for j in jobs) + "</nav>"
+
+    sections = []
+    for j in jobs:
+        rows = "".join(f'<tr><td>{esc(r["name"])}</td><td class="st">{STATUS[r["status"]][0]} {esc(STATUS[r["status"]][1])}'
+                       f'</td><td>{esc(r["result"])}</td></tr>' for r in j["rows"])
+        body = ('<div class="wrap"><table><thead><tr><th>チェック</th><th>状態</th><th>結果</th></tr></thead>'
+                f"<tbody>{rows}</tbody></table></div>")
+        if j.get("gate_failures"):
+            body += f'<p class="s-fail">品質ゲート不合格: {esc(" / ".join(j["gate_failures"]))}</p>'
+        for d in j.get("details", []):
+            # 失敗したテストの一覧は最初から開いておく
+            is_open = " open" if "失敗" in d["summary"] else ""
+            body += (f"<details{is_open}><summary>{esc(d['summary'])}</summary>"
+                     + table_html(d["headers"], d["rows"]) + "</details>")
+        sections.append(f'<section class="job" id="job-{esc(j["job"])}"><h2>{esc(j.get("title", j["job"]))}</h2>'
+                        f"{body}</section>")
+    if not sections:
+        sections.append('<p class="muted">実行されたジョブがありません (変更のなかったプロジェクトは実行されません)。</p>')
+
+    art_html = ""
+    if artifacts:
+        items = "".join(f'<li><a href="{esc(a["url"])}">{esc(a["name"])}</a> <span class="muted">'
+                        f'({a.get("size", 0) / 1024:.0f} KB)</span></li>'
+                        for a in artifacts if a["name"].startswith("pages-"))
+        art_html = ("<section><h2>HTML レポート一式 (zip)</h2><p class=\"muted\">JaCoCo・Javadoc・Vitest・カバレッジ・"
+                    "Storybook など複数ファイルのレポートは zip でダウンロードし、展開して開いてください"
+                    "(Vitest・Storybook は <code>npx http-server &lt;展開先&gt;</code> などでローカル配信が必要)。</p>"
+                    f'<ul class="arts">{items}</ul></section>')
+
+    title = f"CI レポート PR #{pr}" if pr else "CI レポート"
+    meta = []
+    if pr:
+        meta.append(f'<span><a href="{esc(pr_url)}">PR #{esc(pr)}</a> {esc(pr_title)}</span>')
+    meta.append(f"<span>ブランチ {esc(ctx['ref'])}</span>")
+    if ctx["commit"]:
+        meta.append(f'<span>コミット <a href="{esc(ctx["server"])}/{esc(ctx["repo"])}/commit/{esc(ctx["commit"])}">'
+                    f"<code>{esc(ctx['commit'][:7])}</code></a></span>")
+    if ctx["run_url"]:
+        meta.append(f'<span><a href="{esc(ctx["run_url"])}">CI 実行 (ジョブサマリ・Artifacts)</a></span>')
+    meta.append(f"<span>生成 {esc(fmt_jst(now_iso()))} JST</span>")
+
+    html_text = ('<!doctype html><html lang="ja"><head><meta charset="utf-8">'
+                 '<meta name="viewport" content="width=device-width, initial-scale=1">'
+                 f"<title>{esc(title)}</title><style>{BASE_CSS}{REPORT_CSS}</style></head><body><main>"
+                 f'<header><h1>{esc(title)}</h1><div class="meta">{"".join(meta)}</div></header>'
+                 + gate + toc + "".join(sections) + art_html
+                 + "<footer>このファイルは CI が自動生成した 1 ファイル完結の HTML です。"
+                   "変更のなかったプロジェクトのジョブは実行されないため、ここには載りません。</footer>"
+                 + "</main></body></html>")
+    Path(args.out).write_text(html_text, encoding="utf-8")
+    return 0
+
+
+def cmd_comment(args) -> int:
+    """PR コメントは要約 (1 チェック 1 行) と、1 ファイル HTML レポートへのリンクだけにする."""
+    ctx = run_context()
+    jobs, failures = load_jobs(args.summaries)
     gate = ("✅ **品質ゲート: 合格**" if not failures
             else "❌ **品質ゲート: 不合格** — " + " / ".join(md_cell(f) for f in failures))
-    head = [
-        "<!-- ci-report -->",
-        "## 📊 CI レポート",
-        "",
-        gate,
-        "",
-        f"コミット `{ctx['commit'][:7]}` ・ [CI 実行]({ctx['run_url']})" if ctx["run_url"] else "",
-        "",
-        "> このコメントは補助です。正はチェック一覧と各ジョブのサマリです。"
-        "HTML レポートは CI 実行の **Artifacts** (`pages-*`) をダウンロードして開いてください。"
-        "変更のなかったプロジェクトのジョブは実行されません。",
-    ]
+    lines = ["<!-- ci-report -->", "## 📊 CI レポート", "", gate, ""]
+    if args.report_url:
+        lines += [f"### 📄 [CI レポートを開く]({args.report_url})", "",
+                  "テストの失敗・ファイル別カバレッジ・指摘の一覧など、すべての詳細はこのページで見られます"
+                  " (この CI 実行の Artifact `ci-report.html`。GitHub にログインした状態で開いてください。保持 14 日)。", ""]
+    lines += ["| 対象 | チェック | 状態 | 結果 |", "|---|---|:---:|---|"]
+    for job in jobs:
+        for row in job["rows"]:
+            lines.append(f"| {md_cell(job.get('job', ''))} | {md_cell(row['name'])} | {STATUS[row['status']][0]} "
+                         f"| {md_cell(row['result'])} |")
+    if not jobs:
+        lines.append("| - | 実行されたジョブがありません | - | - |")
+    footer = f"コミット `{ctx['commit'][:7]}` ・ [CI 実行 (ジョブサマリ・Artifacts)]({ctx['run_url']})"
     if args.pages_url:
-        head.append(f"> develop の最新レポート: {args.pages_url}")
-    if not bodies:
-        bodies = ["実行されたジョブの要約がありません。"]
-    text = "\n".join(head) + "\n\n" + "\n---\n\n".join(bodies)
-    if len(text) > 60000:  # コメントの上限 65536 文字
-        text = text[:60000] + "\n\n…(長いため省略しました)"
-    Path(args.out).write_text(text, encoding="utf-8")
+        footer += f" ・ [develop の品質レポート (Pages)]({args.pages_url})"
+    lines += ["", footer, "",
+              "<sub>変更のなかったプロジェクトのジョブは実行されません。このコメントは push のたびに上書きされます。</sub>"]
+    Path(args.out).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return 0
 
 
@@ -559,9 +658,16 @@ def main() -> int:
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_docs)
 
+    p = sub.add_parser("report-html")
+    p.add_argument("--summaries", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--artifacts", default="")
+    p.set_defaults(func=cmd_report_html)
+
     p = sub.add_parser("comment")
     p.add_argument("--summaries", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--report-url", default="")
     p.add_argument("--pages-url", default="")
     p.set_defaults(func=cmd_comment)
 

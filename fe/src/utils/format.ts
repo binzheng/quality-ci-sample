@@ -22,3 +22,11 @@ export function truncate(text: string, max: number): string {
   }
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
+
+/**
+ * 件数を「n 件」形式にする。
+ * @param count 件数
+ */
+export function formatCount(count: number): string {
+  return `${Math.max(0, Math.trunc(count))} 件`;
+}

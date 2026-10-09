@@ -42,6 +42,16 @@ public class TodoController {
     }
 
     /**
+     * TODO の件数集計を返す.
+     *
+     * @return 全件数・完了件数・未完了件数
+     */
+    @GetMapping("/stats")
+    public TodoStats stats() {
+        return service.stats();
+    }
+
+    /**
      * TODO を 1 件返す.
      *
      * @param id ID

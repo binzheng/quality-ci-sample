@@ -71,4 +71,15 @@ public class TodoService {
     public boolean delete(long id) {
         return store.remove(id) != null;
     }
+
+    /**
+     * TODO の件数を集計する.
+     *
+     * @return 全件数・完了件数・未完了件数
+     */
+    public TodoStats stats() {
+        int total = store.size();
+        int done = (int) store.values().stream().filter(Todo::done).count();
+        return new TodoStats(total, done, total - done);
+    }
 }

@@ -44,6 +44,16 @@ class TodoServiceTest {
     }
 
     @Test
+    void statsCountsDoneAndRemaining() {
+        service.create("a");
+        Todo b = service.create("b");
+        service.create("c");
+        service.complete(b.id());
+
+        assertThat(service.stats()).isEqualTo(new TodoStats(3, 1, 2));
+    }
+
+    @Test
     void deleteRemovesTodo() {
         Todo todo = service.create("task");
 

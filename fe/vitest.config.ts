@@ -20,7 +20,7 @@ export default mergeConfig(
       },
       coverage: {
         provider: 'v8',
-        reporter: ['text', 'html', 'json-summary', 'lcov'],
+        reporter: ['text', 'html', 'json-summary', 'json', 'lcov'],
         reportsDirectory: 'reports/coverage',
         reportOnFailure: true,
         include: ['src/**/*.{ts,tsx}'],

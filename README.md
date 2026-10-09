@@ -13,8 +13,8 @@ FE / BE / Docs の 3 プロジェクト構成のモノレポに、品質チェ�
 - **PR (develop 宛)**: `ci.yml` が変更のあったプロジェクトだけ検査し、結果を PR 画面に出します
   - チェック一覧の `CI status` (必須チェックはこれ 1 つ)
   - 各ジョブのサマリ (件数・カバレッジ率と develop との差・指摘一覧) と注釈 (失敗テスト・エラーの該当行)
-  - PR コメント (要約表と「📄 CI レポートを開く」リンク。push ごとに上書き)
-  - CI レポート: 全ジョブの詳細を 1 ファイルの HTML (`ci-report.html`) にまとめ、圧縮せずに Artifact に保存。リンクを開くとブラウザでそのまま表示される
+  - PR コメント: 1 チェック 1 行の要約表。各行の「画面」リンクから、テスト結果 (JUnit)・カバレッジ (JaCoCo) などを**それぞれ別の画面**で開ける (push ごとに上書き)
+  - 画面はチェックごとの 1 ファイル完結の HTML を圧縮せずに Artifact に保存したもの (`archive: false`)。リンクを開くとブラウザでそのまま表示される
   - 複数ファイルの HTML レポート (JaCoCo・Javadoc 等) は Artifact `pages-<枠>` (zip、14 日)
 - **develop へのマージ**: `ci.yml` が Artifact `pages-<枠>` (90 日) を出し、完了後に `pages.yml` が
   **枠ごとに最新の develop の Artifact** を集めて索引画面を生成し、GitHub Pages へ配備します

@@ -117,6 +117,47 @@ jobs:
           path: out/pages/fe-${{ inputs.package }}-sloc
           retention-days: ${{ inputs.retention-days }}
 
+      # PR コメントからリンクする画面 (1 ファイル完結の HTML)。圧縮せずに上げるとブラウザでそのまま開ける
+      - name: Upload view fe-${{ inputs.package }}-tests.html
+        if: always() && hashFiles(format('out/report/fe-{0}-tests.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/fe-${{ inputs.package }}-tests.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload view fe-${{ inputs.package }}-coverage.html
+        if: always() && hashFiles(format('out/report/fe-{0}-coverage.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/fe-${{ inputs.package }}-coverage.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload view fe-${{ inputs.package }}-eslint.html
+        if: always() && hashFiles(format('out/report/fe-{0}-eslint.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/fe-${{ inputs.package }}-eslint.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload view fe-${{ inputs.package }}-audit.html
+        if: always() && hashFiles(format('out/report/fe-{0}-audit.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/fe-${{ inputs.package }}-audit.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Upload view fe-${{ inputs.package }}-sloc.html
+        if: always() && hashFiles(format('out/report/fe-{0}-sloc.html', inputs.package)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          path: out/report/fe-${{ inputs.package }}-sloc.html
+          archive: false
+          retention-days: ${{ inputs.retention-days }}
+
       - name: Upload job summary
         if: always()
         uses: actions/upload-artifact@v4
